@@ -3,6 +3,7 @@ package gee
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -45,7 +46,13 @@ func (c *Context) Next() {
 
 func (c *Context) Fail(code int, err string) {
 	c.index = len(c.handlers)
-	c.JSON(code, H{"message": err})
+	// c.JSON(code, H{"message": err})
+}
+
+func (c *Context) FailWithStatus(code int) {
+	c.Status(code)
+	c.Writer.WriteHeader(code)
+	c.Fail(code, "fail with status")
 }
 
 func (c *Context) Param(key string) string {
@@ -63,6 +70,7 @@ func (c *Context) Query(key string) string {
 
 func (c *Context) Status(code int) {
 	c.StatusCode = code
+	fmt.Println("code:", code)
 	c.Writer.WriteHeader(code)
 }
 
@@ -72,12 +80,14 @@ func (c *Context) SetHeader(key string, value string) {
 
 func (c *Context) String(code int, format string, values ...interface{}) {
 	c.SetHeader("Content-Type", "text/plain")
+	fmt.Println("string")
 	c.Status(code)
 	c.Writer.Write([]byte(fmt.Sprintf(format, values...)))
 }
 
 func (c *Context) JSON(code int, obj interface{}) {
 	c.SetHeader("Content-Type", "application/json")
+	fmt.Println("json")
 	c.Status(code)
 	encoder := json.NewEncoder(c.Writer)
 	if err := encoder.Encode(obj); err != nil {
@@ -86,6 +96,7 @@ func (c *Context) JSON(code int, obj interface{}) {
 }
 
 func (c *Context) Data(code int, data []byte) {
+	fmt.Println("data")
 	c.Status(code)
 	c.Writer.Write(data)
 }
@@ -94,8 +105,54 @@ func (c *Context) Data(code int, data []byte) {
 // refer https://golang.org/pkg/html/template/
 func (c *Context) HTML(code int, name string, data interface{}) {
 	c.SetHeader("Content-Type", "text/html")
+	fmt.Println("html")
 	c.Status(code)
 	if err := c.engine.htmlTemplates.ExecuteTemplate(c.Writer, name, data); err != nil {
 		c.Fail(500, err.Error())
 	}
+}
+
+func (c *Context) GetHeader(key string) string {
+	return c.Req.Header.Get(key)
+}
+
+func (c *Context) BindJSON(obj interface{}) error {
+	if c.Req == nil || c.Req.Body == nil {
+		return fmt.Errorf("invalid request")
+	}
+	return decodeJSON(c.Req.Body, obj)
+}
+
+func decodeJSON(r io.Reader, obj interface{}) error {
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(obj); err != nil {
+		return err
+	}
+	// ignore validate
+	return nil
+}
+
+func (c *Context) BindQuery(obj interface{}) error {
+	values := c.Req.URL.Query()
+	if err := mapForm(obj, values); err != nil {
+		return err
+	}
+	// ignore validate
+	return nil
+}
+
+func (c *Context) DefaultQuery(key, defaultValue string) string {
+	values := c.Query(key)
+	if values != "" {
+		return values
+	}
+	return defaultValue
+}
+
+func (c *Context) Header(key, value string) {
+	if value == "" {
+		c.Writer.Header().Del(key)
+		return
+	}
+	c.Writer.Header().Set(key, value)
 }
